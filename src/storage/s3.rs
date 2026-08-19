@@ -78,6 +78,17 @@ impl S3Storage {
         }
     }
 
+    /// Host con puerto (ej "minio:9000"). El signature canonical host
+    /// tiene que matchear EXACTAMENTE al header Host HTTP — si no, 403.
+    fn host_header_value(&self, endpoint: &str) -> String {
+        let u = url::Url::parse(endpoint).expect("valid endpoint");
+        let h = u.host_str().unwrap_or("localhost");
+        match u.port() {
+            Some(p) => format!("{h}:{p}"),
+            None => h.to_string(),
+        }
+    }
+
     /// SigV4 header auth — para PUT, GET, LIST.
     fn sign_request(
         &self,
@@ -169,32 +180,27 @@ impl Storage for S3Storage {
     }
 
     async fn ping(&self) -> Result<()> {
-        // HEAD bucket
-        let url = if self.path_style {
-            format!("{}/{}", self.endpoint, self.bucket)
-        } else {
-            // No usado en MinIO pero queda
-            format!("{}/{}", self.endpoint, self.bucket)
-        };
-        let host = url::Url::parse(&url)
-            .map_err(|e| anyhow!("endpoint parse: {e}"))?
-            .host_str()
-            .ok_or_else(|| anyhow!("no host in endpoint"))?
-            .to_string();
-
+        let url = format!("{}/{}", self.endpoint.trim_end_matches('/'), self.bucket);
+        let host = self.host_header_value(&self.endpoint);
         let body_hash = sha256_hex(b"");
         let headers = self.sign_request("HEAD", &host, "", &body_hash, None);
+        // reqwest will set Host from URL automatically; but our sign_request
+        // didn't include Host in the actual header map. Set it explicitly.
+        let mut h = headers;
+        h.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
+
         let resp = self
             .client
             .head(&url)
-            .headers(headers)
+            .headers(h)
             .send()
             .await
             .context("HEAD bucket")?;
         if resp.status().is_success() || resp.status().as_u16() == 404 {
             Ok(())
         } else {
-            Err(anyhow!("ping status {}", resp.status()))
+            let body = resp.text().await.unwrap_or_default();
+            Err(anyhow!("ping status {}: {}", resp.status(), body))
         }
     }
 
@@ -202,13 +208,11 @@ impl Storage for S3Storage {
         let ct = content_type.unwrap_or("application/octet-stream");
         let body_hash = sha256_hex(&data);
         let url = self.host_for(&self.endpoint, key);
-        let host = url::Url::parse(&url)
-            .map_err(|e| anyhow!("endpoint parse: {e}"))?
-            .host_str()
-            .unwrap()
-            .to_string();
+        let host = self.host_header_value(&self.endpoint);
 
-        let headers = self.sign_request("PUT", &host, "", &body_hash, Some(ct));
+        let mut headers = self.sign_request("PUT", &host, "", &body_hash, Some(ct));
+        headers.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
+
         let resp = self
             .client
             .put(&url)
@@ -227,14 +231,11 @@ impl Storage for S3Storage {
 
     async fn get(&self, key: &str) -> Result<Bytes> {
         let url = self.host_for(&self.endpoint, key);
-        let host = url::Url::parse(&url)
-            .map_err(|e| anyhow!("endpoint parse: {e}"))?
-            .host_str()
-            .unwrap()
-            .to_string();
+        let host = self.host_header_value(&self.endpoint);
 
-        let body_hash = sha256_hex(b"");
-        let headers = self.sign_request("GET", &host, "", &body_hash, None);
+        let mut headers = self.sign_request("GET", &host, "", &sha256_hex(b""), None);
+        headers.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
+
         let resp = self
             .client
             .get(&url)
@@ -244,7 +245,8 @@ impl Storage for S3Storage {
             .context("GET")?;
         if !resp.status().is_success() {
             let s = resp.status();
-            return Err(anyhow!("GET {key} -> {s}"));
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("GET {key} -> {s}: {body}"));
         }
         let bytes = resp.bytes().await.context("read body")?;
         Ok(bytes)
@@ -252,19 +254,17 @@ impl Storage for S3Storage {
 
     async fn list(&self, prefix: &str, limit: usize) -> Result<Vec<ObjectInfo>> {
         let query = format!("list-type=2&prefix={}&max-keys={}", urlencoding(prefix), limit);
-        let url = if self.path_style {
-            format!("{}/{}?{}", self.endpoint, self.bucket, query)
-        } else {
-            format!("{}/{}?{}", self.endpoint, self.bucket, query)
-        };
-        let host = url::Url::parse(&url)
-            .map_err(|e| anyhow!("endpoint parse: {e}"))?
-            .host_str()
-            .unwrap()
-            .to_string();
+        let url = format!(
+            "{}/{}?{}",
+            self.endpoint.trim_end_matches('/'),
+            self.bucket,
+            query
+        );
+        let host = self.host_header_value(&self.endpoint);
 
-        let body_hash = sha256_hex(b"");
-        let headers = self.sign_request("GET", &host, &query, &body_hash, None);
+        let mut headers = self.sign_request("GET", &host, &query, &sha256_hex(b""), None);
+        headers.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
+
         let resp = self
             .client
             .get(&url)
@@ -277,7 +277,6 @@ impl Storage for S3Storage {
         }
         let body = resp.text().await.context("read list body")?;
 
-        // Parse XML mínimo — sin dependencias.
         let mut out = Vec::new();
         for chunk in body.split("</Contents>") {
             if !chunk.contains("<Key>") { continue; }
@@ -299,54 +298,34 @@ impl Storage for S3Storage {
     }
 
     async fn presigned_get(&self, key: &str, ttl_secs: u64) -> Result<String> {
-        // SigV4 query string auth.
         let now = Utc::now();
         let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
         let date_stamp = now.format("%Y%m%d").to_string();
         let expires = ttl_secs.to_string();
+        let host = self.host_header_value(&self.public_endpoint);
 
-        let host = url::Url::parse(&self.public_endpoint)
-            .map_err(|e| anyhow!("endpoint parse: {e}"))?
-            .host_str()
-            .ok_or_else(|| anyhow!("no host"))?
-            .to_string();
-
-        // Host header se usa en canonical headers para query-string auth también.
-        let canonical_headers = format!("host:{host}\n");
-        let signed_headers = "host";
-
-        // Credential scope para query auth.
         let credential_scope =
             format!("{date_stamp}/{}/{}/aws4_request", self.region, "s3");
         let credential = format!("{}/{}", self.access_key, credential_scope);
 
-        // Query params CANÓNICOS ordenados alfabéticamente.
-        // X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires,
-        // X-Amz-SignedHeaders van ANTES que la key en el canonical query.
         let mut qparams: Vec<(String, String)> = vec![
             ("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()),
             ("X-Amz-Credential".into(), credential.clone()),
             ("X-Amz-Date".into(), amz_date.clone()),
             ("X-Amz-Expires".into(), expires.clone()),
-            ("X-Amz-SignedHeaders".into(), signed_headers.into()),
+            ("X-Amz-SignedHeaders".into(), "host".into()),
         ];
-        // La key entra al canonical query (encoded).
-        if !qparams.iter().any(|(k, _)| k == "key") {
-            qparams.push(("key".into(), key.to_string()));
-        }
         qparams.sort_by(|a, b| a.0.cmp(&b.0));
 
         let canonical_query = qparams
             .iter()
-            .map(|(k, v)| {
-                format!("{}={}", urlencoding(k), urlencoding(v))
-            })
+            .map(|(k, v)| format!("{}={}", urlencoding(k), urlencoding(v)))
             .collect::<Vec<_>>()
             .join("&");
 
+        let canonical_path = format!("/{}/{}", self.bucket, key);
         let canonical_request = format!(
-            "GET\n/{}\n{canonical_query}\n{canonical_headers}\n{signed_headers}\nUNSIGNED-PAYLOAD",
-            if self.path_style { format!("{}/{}", self.bucket, key) } else { key.to_string() }
+            "GET\n{canonical_path}\n{canonical_query}\nhost:{host}\n\nhost\nUNSIGNED-PAYLOAD"
         );
         let cr_hash = sha256_hex(canonical_request.as_bytes());
 
@@ -361,9 +340,9 @@ impl Storage for S3Storage {
         };
 
         let url = format!(
-            "{}/{}?{}&X-Amz-Signature={}",
-            self.public_endpoint,
-            if self.path_style { format!("{}/{}", self.bucket, key) } else { format!("{}/{}", self.bucket, key) },
+            "{}{}?{}&X-Amz-Signature={}",
+            self.public_endpoint.trim_end_matches('/'),
+            canonical_path,
             canonical_query,
             signature
         );
