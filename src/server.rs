@@ -12,6 +12,8 @@ pub fn router(state: AppState) -> Router {
         .route("/jobs", post(handlers::jobs::submit))
         .route("/jobs/:id", get(handlers::jobs::status))
         .route("/streams/notify", post(handlers::streams::notify))
+        .route("/storage/presign", post(handlers::presign::presign))
+        .route("/storage/list", get(handlers::presign::list))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)

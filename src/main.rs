@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tracing_subscriber::{fmt, EnvFilter};
 
-use movie_worker::{config::Config, server, state::AppState};
+use movie_worker::{config::Config, server, state::AppState, storage::StorageExt};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -9,7 +9,15 @@ async fn main() -> Result<()> {
     cfg.validate()?;
     init_tracing();
 
-    let state = AppState::new(cfg.clone());
+    let storage = movie_worker::storage::build_from_env()?;
+    tracing::info!(
+        backend = ? storage.back_backend_str(),
+        bucket = storage.bucket(),
+        "storage provider ready"
+    );
+    storage.ping().await?;
+
+    let state = AppState::new(cfg.clone(), storage);
     let app = server::router(state);
 
     tracing::info!("movie_worker listening on {} (api={})", cfg.addr, cfg.api_url);

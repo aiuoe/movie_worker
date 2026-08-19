@@ -1,12 +1,13 @@
-use std::path::Path;
+//! Job: escanea MEDIA_ROOT (filesystem local) y sube todo al bucket.
+//! En el futuro este job lo gatillará un watcher inotify o un cron.
+
+use std::collections::HashMap;
 
 use crate::state::AppState;
 
-/// Escanea `MEDIA_ROOT` y emite un log con cada carpeta encontrada.
-/// Convierte el job en trigger para que el API refresque el catálogo.
-pub async fn run(state: &AppState) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let root = Path::new(&state.cfg.media_root);
-    tracing::info!(root = %root.display(), "ingest: scan");
+pub async fn run(state: &AppState, _args: &HashMap<String, String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let root = std::path::Path::new(&state.cfg.media_root);
+    tracing::info!(root = %root.display(), "ingest: scanning");
 
     let entries = match std::fs::read_dir(root) {
         Ok(r) => r,
@@ -20,12 +21,14 @@ pub async fn run(state: &AppState) -> Result<(), Box<dyn std::error::Error + Sen
     for entry in entries.flatten() {
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             if let Some(name) = entry.file_name().to_str() {
-                tracing::debug!(folder = name, "found");
+                let prefix = format!("media/{name}/");
+                let existing = state.storage.list(&prefix, 1000).await.unwrap_or_default();
+                tracing::info!(folder = name, existing = existing.len(), "ingest: indexed");
                 count += 1;
             }
         }
     }
 
-    tracing::info!(count, "ingest done");
+    tracing::info!(count, "ingest: done");
     Ok(())
 }

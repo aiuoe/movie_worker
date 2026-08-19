@@ -1,9 +1,12 @@
+//! Job: scraping de metadata. Cuando se enchufe TMDB/TVDB esto se convierte
+//! en un HTTP client con caché. Por ahora valida el input.
+
+use std::collections::HashMap;
+
 use crate::state::AppState;
 
-/// Scraping de metadata. Cuando se enchufe TMDB/TVDB esto se convierte
-/// en un HTTP client con caché. Por ahora valida que el media_id tenga
-/// forma razonable para evitar jobs basura.
-pub async fn run(_state: &AppState, media_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run(_state: &AppState, args: &HashMap<String, String>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let media_id = args.get("media_id").map(String::as_str).unwrap_or("");
     if media_id.len() < 3 {
         return Err(format!("invalid media_id: {media_id}").into());
     }

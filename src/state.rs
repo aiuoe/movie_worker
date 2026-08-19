@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::client::ApiClient;
 use crate::config::Config;
+use crate::storage::SharedStorage;
 
 /// Estado compartido entre handlers. Mantenerlo pequeño y detrás de un RwLock
 /// es suficiente hasta que enchufemos una cola persistente (Redis / Postgres).
@@ -14,15 +15,17 @@ pub struct AppState {
     pub cfg: Config,
     pub jobs: Arc<RwLock<HashMap<Uuid, JobRecord>>>,
     pub api: ApiClient,
+    pub storage: SharedStorage,
 }
 
 impl AppState {
-    pub fn new(cfg: Config) -> Self {
+    pub fn new(cfg: Config, storage: SharedStorage) -> Self {
         let api = ApiClient::new(&cfg.api_url);
         Self {
             cfg,
             jobs: Arc::new(RwLock::new(HashMap::new())),
             api,
+            storage,
         }
     }
 }
