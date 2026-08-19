@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.7
+# Variante del worker CON ffmpeg/ffprobe para transcoding real.
+# Build:    docker build -f Dockerfile.ffmpeg -t movie_worker:ffmpeg .
+# Tamaño objetivo: ~80-100MB (alpine + ffmpeg + worker ~3MB).
+
+FROM rust:1.91-alpine AS build
+
+WORKDIR /src
+RUN apk add --no-cache musl-dev pkgconfig
+COPY Cargo.toml Cargo.lock* ./
+RUN mkdir -p src && echo "fn main(){}" > src/main.rs && \
+    cargo build --release --target x86_64-unknown-linux-musl && \
+    rm -rf src target/x86_64-unknown-linux-musl/release/deps/movie_worker*
+COPY src ./src
+RUN cargo build --release --target x86_64-unknown-linux-musl \
+    && strip target/x86_64-unknown-linux-musl/release/movie_worker
+
+FROM alpine:3.20 AS runtime
+RUN apk add --no-cache ffmpeg ca-certificates
+COPY --from=build /src/target/x86_64-unknown-linux-musl/release/movie_worker /movie_worker
+
+ENV ADDR=0.0.0.0:9090 \
+    API_URL=http://movie_api:8080 \
+    MEDIA_ROOT=/media
+EXPOSE 9090
+ENTRYPOINT ["/movie_worker"]
