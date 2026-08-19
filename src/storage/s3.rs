@@ -90,10 +90,13 @@ impl S3Storage {
     }
 
     /// SigV4 header auth — para PUT, GET, LIST.
+    /// Toma `canonical_uri` (path) y `host` por separado — son cosas distintas
+    /// en el canonical request de SigV4.
     fn sign_request(
         &self,
         method: &str,
-        url_path: &str,
+        canonical_uri: &str,
+        host: &str,
         query: &str,
         body_hash: &str,
         content_type: Option<&str>,
@@ -102,17 +105,19 @@ impl S3Storage {
         let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
         let date_stamp = now.format("%Y%m%d").to_string();
 
-        let canonical_headers = match content_type {
-            Some(ct) => format!("content-type:{ct}\nhost:{url_path}\nx-amz-content-sha256:{body_hash}\nx-amz-date:{amz_date}\n"),
-            None => format!("host:{url_path}\nx-amz-content-sha256:{body_hash}\nx-amz-date:{amz_date}\n"),
-        };
-        let signed_headers = match content_type {
-            Some(_) => "content-type;host;x-amz-content-sha256;x-amz-date",
-            None => "host;x-amz-content-sha256;x-amz-date",
+        let (canonical_headers_str, signed_headers_str) = match content_type {
+            Some(ct) => (
+                format!("content-type:{ct}\nhost:{host}\nx-amz-content-sha256:{body_hash}\nx-amz-date:{amz_date}\n"),
+                "content-type;host;x-amz-content-sha256;x-amz-date",
+            ),
+            None => (
+                format!("host:{host}\nx-amz-content-sha256:{body_hash}\nx-amz-date:{amz_date}\n"),
+                "host;x-amz-content-sha256;x-amz-date",
+            ),
         };
 
         let canonical_request = format!(
-            "{method}\n{url_path}\n{query}\n{canonical_headers}\n{signed_headers}\n{body_hash}",
+            "{method}\n{canonical_uri}\n{query}\n{canonical_headers_str}\n{signed_headers_str}\n{body_hash}",
         );
         let cr_hash = sha256_hex(canonical_request.as_bytes());
 
@@ -129,7 +134,7 @@ impl S3Storage {
 
         let auth = format!(
             "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            self.access_key, credential_scope, signed_headers, signature
+            self.access_key, credential_scope, signed_headers_str, signature
         );
 
         let mut h = HeaderMap::new();
