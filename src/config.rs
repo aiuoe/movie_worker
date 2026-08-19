@@ -9,6 +9,10 @@ pub struct Config {
     pub addr: String,
     pub api_url: String,
     pub media_root: String,
+    pub radarr_url: String,
+    pub radarr_api_key: String,
+    pub sonarr_url: String,
+    pub sonarr_api_key: String,
 }
 
 impl Config {
@@ -17,6 +21,10 @@ impl Config {
             addr: env_or("ADDR", "0.0.0.0:9090"),
             api_url: env_or("API_URL", "http://localhost:8080"),
             media_root: env_or("MEDIA_ROOT", "/media"),
+            radarr_url: env_or("RADARR_URL", "http://localhost:7878"),
+            radarr_api_key: env_or("RADARR_API_KEY", ""),
+            sonarr_url: env_or("SONARR_URL", "http://localhost:8989"),
+            sonarr_api_key: env_or("SONARR_API_KEY", ""),
         })
     }
 

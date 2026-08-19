@@ -6,3 +6,4 @@ pub mod client;
 pub mod handlers;
 pub mod jobs;
 pub mod storage;
+pub mod arr;

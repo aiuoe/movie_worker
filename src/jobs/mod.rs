@@ -4,6 +4,7 @@ pub mod scrape;
 pub mod transcode;
 pub mod upload;
 pub mod ingest;
+pub mod import;
 
 use std::collections::HashMap;
 
@@ -33,6 +34,7 @@ pub async fn dispatch(state: AppState, rec: JobRecord) {
         "ingest" => ingest::run(&state, &args).await,
         "download" => download::run(&state, &args).await,
         "upload" => upload::run(&state, &args).await,
+        "import" => import::run(&state, &args).await,
         other => Err(format!("unknown job kind: {other}").into()),
     };
 

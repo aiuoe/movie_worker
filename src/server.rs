@@ -12,6 +12,8 @@ pub fn router(state: AppState) -> Router {
         .route("/jobs", post(handlers::jobs::submit))
         .route("/jobs/:id", get(handlers::jobs::status))
         .route("/streams/notify", post(handlers::streams::notify))
+        .route("/webhooks/radarr", post(handlers::webhook::import))
+        .route("/webhooks/sonarr", post(handlers::webhook::import))
         .route("/storage/presign", post(handlers::presign::presign))
         .route("/storage/list", get(handlers::presign::list))
         .layer(CorsLayer::permissive())
