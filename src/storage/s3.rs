@@ -182,8 +182,9 @@ impl Storage for S3Storage {
     async fn ping(&self) -> Result<()> {
         let url = format!("{}/{}", self.endpoint.trim_end_matches('/'), self.bucket);
         let host = self.host_header_value(&self.endpoint);
+        let canonical_uri = format!("/{}", self.bucket);
         let body_hash = sha256_hex(b"");
-        let mut headers = self.sign_request("HEAD", &host, "", &body_hash, None);
+        let mut headers = self.sign_request("HEAD", &canonical_uri, &host, "", &body_hash, None);
         headers.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
 
         let resp = self
@@ -207,8 +208,9 @@ impl Storage for S3Storage {
         let body_hash = sha256_hex(&data);
         let url = self.host_for(&self.endpoint, key);
         let host = self.host_header_value(&self.endpoint);
+        let canonical_uri = format!("/{}/{}", self.bucket, key);
 
-        let mut headers = self.sign_request("PUT", &host, "", &body_hash, Some(ct));
+        let mut headers = self.sign_request("PUT", &canonical_uri, &host, "", &body_hash, Some(ct));
         headers.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
 
         let resp = self
@@ -230,8 +232,9 @@ impl Storage for S3Storage {
     async fn get(&self, key: &str) -> Result<Bytes> {
         let url = self.host_for(&self.endpoint, key);
         let host = self.host_header_value(&self.endpoint);
+        let canonical_uri = format!("/{}/{}", self.bucket, key);
 
-        let mut headers = self.sign_request("GET", &host, "", &sha256_hex(b""), None);
+        let mut headers = self.sign_request("GET", &canonical_uri, &host, "", &sha256_hex(b""), None);
         headers.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
 
         let resp = self
@@ -259,8 +262,9 @@ impl Storage for S3Storage {
             query
         );
         let host = self.host_header_value(&self.endpoint);
+        let canonical_uri = format!("/{}", self.bucket);
 
-        let mut headers = self.sign_request("GET", &host, &query, &sha256_hex(b""), None);
+        let mut headers = self.sign_request("GET", &canonical_uri, &host, &query, &sha256_hex(b""), None);
         headers.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
 
         let resp = self
