@@ -11,7 +11,7 @@
 ARG REPO=aiuoe/movie_worker
 ARG COMMIT=main
 
-FROM alpine/git:2.47 AS src
+FROM alpine/git:latest AS src
 ARG REPO
 ARG COMMIT
 RUN apk add --no-cache bash && \
