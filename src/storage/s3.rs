@@ -183,24 +183,22 @@ impl Storage for S3Storage {
         let url = format!("{}/{}", self.endpoint.trim_end_matches('/'), self.bucket);
         let host = self.host_header_value(&self.endpoint);
         let body_hash = sha256_hex(b"");
-        let headers = self.sign_request("HEAD", &host, "", &body_hash, None);
-        // reqwest will set Host from URL automatically; but our sign_request
-        // didn't include Host in the actual header map. Set it explicitly.
-        let mut h = headers;
-        h.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
+        let mut headers = self.sign_request("HEAD", &host, "", &body_hash, None);
+        headers.insert(reqwest::header::HOST, HeaderValue::from_str(&host).unwrap());
 
         let resp = self
             .client
             .head(&url)
-            .headers(h)
+            .headers(headers)
             .send()
             .await
             .context("HEAD bucket")?;
-        if resp.status().is_success() || resp.status().as_u16() == 404 {
+        let status = resp.status();
+        if status.is_success() || status.as_u16() == 404 {
             Ok(())
         } else {
             let body = resp.text().await.unwrap_or_default();
-            Err(anyhow!("ping status {}: {}", resp.status(), body))
+            Err(anyhow!("ping status {}: {}", status, body))
         }
     }
 
@@ -221,10 +219,10 @@ impl Storage for S3Storage {
             .send()
             .await
             .context("PUT")?;
-        if !resp.status().is_success() {
-            let s = resp.status();
+        let status = resp.status();
+        if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("PUT {key} -> {s}: {body}"));
+            return Err(anyhow!("PUT {key} -> {status}: {body}"));
         }
         Ok(())
     }
@@ -243,10 +241,10 @@ impl Storage for S3Storage {
             .send()
             .await
             .context("GET")?;
-        if !resp.status().is_success() {
-            let s = resp.status();
+        let status = resp.status();
+        if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("GET {key} -> {s}: {body}"));
+            return Err(anyhow!("GET {key} -> {status}: {body}"));
         }
         let bytes = resp.bytes().await.context("read body")?;
         Ok(bytes)
