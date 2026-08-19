@@ -34,7 +34,14 @@ pub async fn run(state: &AppState, args: &HashMap<String, String>) -> Result<(),
         _ => "application/octet-stream",
     };
 
-    let key = format!("media/{media_id}/{lang}/source.{ext}");
+    // El media_id puede venir como "tmdb:693134" o como ID directo.
+    // Extraemos el número para que coincida con el seed del API.
+    let clean_id = media_id
+        .trim_start_matches("tmdb:")
+        .trim_start_matches("tvdb:")
+        .to_string();
+
+    let key = format!("media/{clean_id}/{lang}/source.{ext}");
     tracing::info!(path, key, size, "import: uploading to bucket");
     state.storage.put(&key, data.into(), Some(ct)).await?;
     tracing::info!(key, "import: done — file is now playable");

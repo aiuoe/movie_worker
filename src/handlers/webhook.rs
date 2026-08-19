@@ -41,6 +41,18 @@ pub struct RadarrWebhook {
     pub series: Option<serde_json::Value>,
     #[serde(default)]
     pub episode_file: Option<serde_json::Value>,
+    /// Radarr manda "eventType": "Download" o "Test"
+    #[serde(default)]
+    pub event_type: Option<String>,
+    /// Radarr manda el id del movie (interno, numérico). Lo usamos para mapear.
+    #[serde(default)]
+    pub movie_id: Option<u64>,
+    /// TMDB id directamente (lo agregamos a la config de Radarr custom script)
+    #[serde(default)]
+    pub tmdb_id: Option<u64>,
+    /// TVDB id para series
+    #[serde(default)]
+    pub tvdb_id: Option<u64>,
 }
 
 /// Endpoint principal: recibe un webhook tipo Radarr/Sonarr y dispara el job `import`.
@@ -91,22 +103,26 @@ fn extract_fields(
     body: Option<RadarrWebhook>,
 ) -> (Option<String>, Option<String>) {
     if let Some(b) = body {
+        // Prioridad: TMDB id / TVDB id (los que usa nuestro seed del API)
+        // → media_id con prefijo de tipo para que el job lo use correctamente
         let mid = b
             .media_id
             .clone()
+            .or_else(|| b.tmdb_id.map(|n| format!("tmdb:{}", n)))
+            .or_else(|| b.tvdb_id.map(|n| format!("tvdb:{}", n)))
             .or_else(|| {
                 b.movie
                     .as_ref()
                     .and_then(|m| m.get("tmdbId"))
                     .and_then(|v| v.as_u64())
-                    .map(|n| n.to_string())
+                    .map(|n| format!("tmdb:{}", n))
             })
             .or_else(|| {
                 b.series
                     .as_ref()
                     .and_then(|s| s.get("tvdbId"))
                     .and_then(|v| v.as_u64())
-                    .map(|n| n.to_string())
+                    .map(|n| format!("tvdb:{}", n))
             });
 
         let p = b.path.clone().or_else(|| {
