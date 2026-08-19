@@ -1,23 +1,43 @@
 # syntax=docker/dockerfile:1.7
-# Variante del worker CON ffmpeg/ffprobe para transcoding real.
-# Build:    docker build -f Dockerfile.ffmpeg -t movie_worker:ffmpeg .
-# Tamaño objetivo: ~80-100MB (alpine + ffmpeg + worker ~3MB).
+# Variante del worker CON ffmpeg para transcoding real (~90MB).
+# Mismo patrón de git clone + checkout que el Dockerfile base.
+
+ARG REPO=aiuoe/movie_worker
+ARG COMMIT=main
+
+FROM alpine/git:2.47 AS src
+ARG REPO
+ARG COMMIT
+RUN apk add --no-cache bash && \
+    git clone --filter=blob:none --no-checkout https://github.com/${REPO}.git /src && \
+    cd /src && \
+    if echo "${COMMIT}" | grep -qE '^[0-9a-f]{7,}$'; then \
+      git fetch --depth 1 origin ${COMMIT} && git checkout ${COMMIT}; \
+    else \
+      git checkout ${COMMIT}; \
+    fi
 
 FROM rust:1.91-alpine AS build
-
 WORKDIR /src
-RUN apk add --no-cache musl-dev pkgconfig
-COPY Cargo.toml Cargo.lock* ./
+RUN apk add --no-cache musl-dev pkgconfig bash
+COPY --from=src /src/Cargo.toml /src/Cargo.lock* ./
 RUN mkdir -p src && echo "fn main(){}" > src/main.rs && \
     cargo build --release --target x86_64-unknown-linux-musl && \
     rm -rf src target/x86_64-unknown-linux-musl/release/deps/movie_worker*
-COPY src ./src
+COPY --from=src /src/ ./
 RUN cargo build --release --target x86_64-unknown-linux-musl \
     && strip target/x86_64-unknown-linux-musl/release/movie_worker
 
 FROM alpine:3.20 AS runtime
+ARG COMMIT
+ARG REPO
 RUN apk add --no-cache ffmpeg ca-certificates
 COPY --from=build /src/target/x86_64-unknown-linux-musl/release/movie_worker /movie_worker
+
+LABEL org.opencontainers.image.title="movie_worker-ffmpeg" \
+      org.opencontainers.image.source="https://github.com/${REPO}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.licenses="MIT"
 
 ENV ADDR=0.0.0.0:9090 \
     API_URL=http://movie_api:8080 \
